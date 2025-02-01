@@ -99,7 +99,7 @@ class Swarm:
     def handle_function_result(self, result, debug) -> Result:
         match result:
             case Result() as result:
-                return result
+                return result  # Return the Result object as is
 
             case Agent() as agent:
                 return Result(
@@ -115,11 +115,11 @@ class Swarm:
                     raise TypeError(error_message)
 
     def handle_tool_calls(
-        self,
-        tool_calls: List[ChatCompletionMessageToolCall],
-        functions: List[AgentFunction],
-        context_variables: dict,
-        debug: bool,
+    self,
+    tool_calls: List[ChatCompletionMessageToolCall],
+    functions: List[AgentFunction],
+    context_variables: dict,
+    debug: bool,
     ) -> Response:
         function_map = {f.__name__: f for f in functions}
         partial_response = Response(
@@ -157,7 +157,7 @@ class Swarm:
                 }
             )
             partial_response.context_variables.update(result.context_variables)
-            if result.agent:
+            if result.agent:  # If the function returns an Agent, switch to it
                 partial_response.agent = result.agent
 
         return partial_response
@@ -252,26 +252,16 @@ class Swarm:
         }
 
     def run(
-        self,
-        agent: Agent,
-        messages: List,
-        context_variables: dict = {},
-        model_override: str = None,
-        stream: bool = False,
-        debug: bool = False,
-        max_turns: int = float("inf"),
-        execute_tools: bool = True,
+    self,
+    agent: Agent,
+    messages: List,
+    context_variables: dict = {},
+    model_override: str = None,
+    stream: bool = False,
+    debug: bool = False,
+    max_turns: int = float("inf"),
+    execute_tools: bool = True,
     ) -> Response:
-        if stream:
-            return self.run_and_stream(
-                agent=agent,
-                messages=messages,
-                context_variables=context_variables,
-                model_override=model_override,
-                debug=debug,
-                max_turns=max_turns,
-                execute_tools=execute_tools,
-            )
         active_agent = agent
         context_variables = copy.deepcopy(context_variables)
         history = copy.deepcopy(messages)
@@ -303,7 +293,7 @@ class Swarm:
             )
             history.extend(partial_response.messages)
             context_variables.update(partial_response.context_variables)
-            if partial_response.agent:
+            if partial_response.agent:  # Switch to the new agent
                 active_agent = partial_response.agent
 
         return Response(

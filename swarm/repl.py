@@ -31,7 +31,7 @@ def process_and_print_streaming_response(response):
         if "response" in chunk:
             return chunk["response"]
     
-    pass
+    return None  # Return None if no response is found
 
 def pretty_print_messages(messages) -> None:
     for message in messages:
@@ -81,6 +81,7 @@ def run_demo_loop(
             pretty_print_messages(response.messages)
 
         messages.extend(response.messages)
-        agent = response.agent
-    
-    pass
+        agent = response.agent  # Update the active agent
+
+        # Print a separator for clarity
+        print("\n---\n")
