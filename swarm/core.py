@@ -115,53 +115,55 @@ class Swarm:
                     raise TypeError(error_message)
 
     def handle_tool_calls(
-    self,
-    tool_calls: List[ChatCompletionMessageToolCall],
-    functions: List[AgentFunction],
-    context_variables: dict,
-    debug: bool,
+        self,
+        tool_calls: List[ChatCompletionMessageToolCall],
+        functions: List[AgentFunction],  # Now expects FunctionDef objects
+        context_variables: dict,
+        debug: bool,
     ) -> Response:
-        function_map = {f.__name__: f for f in functions}
-        partial_response = Response(
-            messages=[], agent=None, context_variables={})
+        function_map = {f.name: f.function for f in functions}  # Key fix
+        partial_response = Response(messages=[], agent=None, context_variables={})
 
         for tool_call in tool_calls:
             name = tool_call.function.name
             if name not in function_map:
                 debug_print(debug, f"Tool {name} not found in function map.")
-                partial_response.messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "tool_name": name,
-                        "content": f"Error: Tool {name} not found.",
-                    }
-                )
-                continue
-            args = json.loads(tool_call.function.arguments)
-            debug_print(
-                debug, f"Processing tool call: {name} with arguments {args}")
-
-            func = function_map[name]
-            if __CTX_VARS_NAME__ in func.__code__.co_varnames:
-                args[__CTX_VARS_NAME__] = context_variables
-            raw_result = function_map[name](**args)
-
-            result: Result = self.handle_function_result(raw_result, debug)
-            partial_response.messages.append(
-                {
+                partial_response.messages.append({
                     "role": "tool",
                     "tool_call_id": tool_call.id,
                     "tool_name": name,
-                    "content": result.value,
-                }
-            )
+                    "content": f"Error: Tool {name} not found.",
+                })
+                continue
+
+            # Get full FunctionDef object
+            func_def = next((f for f in functions if f.name == name), None)
+            
+            # Handle context variables
+            args = json.loads(tool_call.function.arguments)
+            if func_def and __CTX_VARS_NAME__ in func_def.function.__code__.co_varnames:
+                args[__CTX_VARS_NAME__] = context_variables
+
+            # Execute function
+            raw_result = function_map[name](**args)
+            result: Result = self.handle_function_result(raw_result, debug)
+
+            # Update response
+            partial_response.messages.append({
+                "role": "tool",
+                "tool_call_id": tool_call.id,
+                "tool_name": name,
+                "content": result.value,
+            })
             partial_response.context_variables.update(result.context_variables)
-            if result.agent:  # If the function returns an Agent, switch to it
+            
+            # Prioritize agent switch
+            if result.agent and not partial_response.agent:
                 partial_response.agent = result.agent
+                debug_print(debug, f"Agent switch to {result.agent.name}")
 
         return partial_response
-
+        
     def run_and_stream(
         self,
         agent: Agent,
@@ -252,23 +254,22 @@ class Swarm:
         }
 
     def run(
-    self,
-    agent: Agent,
-    messages: List,
-    context_variables: dict = {},
-    model_override: str = None,
-    stream: bool = False,
-    debug: bool = False,
-    max_turns: int = float("inf"),
-    execute_tools: bool = True,
+        self,
+        agent: Agent,
+        messages: List,
+        context_variables: dict = {},
+        model_override: str = None,
+        stream: bool = False,
+        debug: bool = False,
+        max_turns: int = 10,  # Safer default than infinity
+        execute_tools: bool = True,
     ) -> Response:
         active_agent = agent
         context_variables = copy.deepcopy(context_variables)
         history = copy.deepcopy(messages)
-        init_len = len(messages)
+        init_len = len(history)
 
-        while len(history) - init_len < max_turns and active_agent:
-            # Get completion with current history and agent
+        for _ in range(max_turns):
             completion = self.get_chat_completion(
                 agent=active_agent,
                 history=history,
@@ -277,24 +278,30 @@ class Swarm:
                 stream=stream,
                 debug=debug,
             )
+            
             message = completion["choices"][0]["message"]
-            debug_print(debug, "Received completion:", message)
             message["sender"] = active_agent.name
             history.append(message)
 
             if not message.get("tool_calls") or not execute_tools:
-                debug_print(debug, "Ending turn.")
                 break
 
-            # Handle function calls, updating context_variables, and switching agents
             tool_calls = message.get("tool_calls", [])
             partial_response = self.handle_tool_calls(
                 tool_calls, active_agent.functions, context_variables, debug
             )
+            
             history.extend(partial_response.messages)
             context_variables.update(partial_response.context_variables)
-            if partial_response.agent:  # Switch to the new agent
+            
+            # Immediate agent switch handling
+            if partial_response.agent and partial_response.agent != active_agent:
                 active_agent = partial_response.agent
+                history.append({
+                    "role": "system",
+                    "content": f"Conversation transferred to {active_agent.name}"
+                })
+                continue  # Restart loop with new agent
 
         return Response(
             messages=history[init_len:],
